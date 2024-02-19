@@ -33,6 +33,8 @@ uint64_t rust_net_post(TokioContext *tokio_context,
                        const uint8_t *data,
                        uintptr_t length);
 
+uint64_t rust_net_get(TokioContext *tokio_context, ClientContext *client_context, const char *url);
+
 /// 获取reqwest请求状态
 /// 0正在请求
 /// -1请求失败

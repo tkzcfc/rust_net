@@ -1,10 +1,9 @@
 use crate::TokioContext;
-use reqwest::Version;
+use reqwest::{Response, Version};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-
 
 /// client context
 pub struct ClientContext {
@@ -83,6 +82,45 @@ pub unsafe extern "C" fn rust_net_client_free(handler: *mut ClientContext) {
     drop(handler)
 }
 
+async fn handle_response(
+    response_result: Result<Response, reqwest::Error>,
+    item: Arc<OnceCell<RespResult>>,
+) {
+    // 请求被取消
+    if Arc::strong_count(&item) == 1 {
+        return;
+    }
+    match response_result {
+        Ok(response) => {
+            if response.status().is_success() {
+                let status = response.status().as_u16();
+                let version = response.version();
+                match response.bytes().await {
+                    Ok(bytes) => {
+                        let _ = item.set(RespResult::Data(ResponseData {
+                            status,
+                            data: bytes.to_vec(),
+                            version,
+                        }));
+                    }
+                    Err(error) => {
+                        let _ = item.set(RespResult::Error(error.to_string()));
+                    }
+                }
+            } else {
+                let _ = item.set(RespResult::Data(ResponseData {
+                    status: response.status().as_u16(),
+                    data: Vec::new(),
+                    version: response.version(),
+                }));
+            }
+        }
+        Err(error) => {
+            let _ = item.set(RespResult::Error(error.to_string()));
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rust_net_post(
     tokio_context: &mut TokioContext,
@@ -105,39 +143,28 @@ pub unsafe extern "C" fn rust_net_post(
 
     tokio_context.runtime.spawn(async move {
         let response_result = client_cloned.post(url).body(data_slice).send().await;
-        // 请求被取消
-        if Arc::strong_count(&item) == 1 {
-            return;
-        }
-        match response_result {
-            Ok(response) => {
-                if response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let version = response.version();
-                    match response.bytes().await {
-                        Ok(bytes) => {
-                            let _ = item.set(RespResult::Data(ResponseData {
-                                status,
-                                data: bytes.to_vec(),
-                                version,
-                            }));
-                        }
-                        Err(error) => {
-                            let _ = item.set(RespResult::Error(error.to_string()));
-                        }
-                    }
-                } else {
-                    let _ = item.set(RespResult::Data(ResponseData {
-                        status: response.status().as_u16(),
-                        data: Vec::new(),
-                        version: response.version(),
-                    }));
-                }
-            }
-            Err(error) => {
-                let _ = item.set(RespResult::Error(error.to_string()));
-            }
-        }
+        handle_response(response_result, item).await;
+    });
+
+    key as u64
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_net_get(
+    tokio_context: &mut TokioContext,
+    client_context: &mut ClientContext,
+    url: *const c_char,
+) -> u64 {
+    let client_cloned = client_context.client.clone();
+
+    let url = CStr::from_ptr(url).to_str().unwrap().to_string();
+
+    let item = Arc::new(OnceCell::new());
+    let key = client_context.items.insert(item.clone());
+
+    tokio_context.runtime.spawn(async move {
+        let response_result = client_cloned.get(url).send().await;
+        handle_response(response_result, item).await;
     });
 
     key as u64
