@@ -11,7 +11,7 @@ pub struct TokioContext {
 }
 
 #[no_mangle]
-pub extern "C" fn rust_net_tokio_context_new(thread_count: u32) -> *mut TokioContext {
+pub extern "C" fn rust_net_tokio_new(thread_count: u32) -> *mut TokioContext {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(thread_count as usize)
         .enable_all()
@@ -22,7 +22,7 @@ pub extern "C" fn rust_net_tokio_context_new(thread_count: u32) -> *mut TokioCon
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_tokio_context_free(handler: *mut TokioContext) {
+pub unsafe extern "C" fn rust_net_tokio_free(handler: *mut TokioContext) {
     let handler = Box::from_raw(handler);
     drop(handler)
 }

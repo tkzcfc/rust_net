@@ -1,5 +1,7 @@
 use crate::TokioContext;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Response, Version};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -9,6 +11,8 @@ use tokio::sync::OnceCell;
 pub struct ClientContext {
     client: reqwest::Client,
     items: slab::Slab<Arc<OnceCell<RespResult>>>,
+    headers: HashMap<String, String>,
+    params: HashMap<String, String>,
 }
 
 pub struct ResponseData {
@@ -60,6 +64,18 @@ impl RequestResponse {
     }
 }
 
+fn hash_map_to_header_map(map: &HashMap<String, String>) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (key, value) in map {
+        if let Ok(header_name) = HeaderName::from_bytes(key.as_bytes()) {
+            if let Ok(header_value) = HeaderValue::from_str(&value) {
+                headers.insert(header_name, header_value);
+            }
+        }
+    }
+    headers
+}
+
 #[no_mangle]
 pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut ClientContext {
     match reqwest::Client::builder()
@@ -71,6 +87,8 @@ pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut 
         Ok(client) => Box::into_raw(Box::new(ClientContext {
             client,
             items: Default::default(),
+            headers: HashMap::new(),
+            params: HashMap::new(),
         })),
         Err(_) => std::ptr::null_mut(),
     }
@@ -122,6 +140,38 @@ async fn handle_response(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn rust_net_add_header(
+    context: &mut ClientContext,
+    key: *const c_char,
+    value: *const c_char,
+) {
+    let key = CStr::from_ptr(key).to_str().unwrap().to_string();
+    let value = CStr::from_ptr(value).to_str().unwrap().to_string();
+    context.headers.insert(key, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_net_clear_header(context: &mut ClientContext) {
+    context.headers.clear();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_net_add_param(
+    context: &mut ClientContext,
+    key: *const c_char,
+    value: *const c_char,
+) {
+    let key = CStr::from_ptr(key).to_str().unwrap().to_string();
+    let value = CStr::from_ptr(value).to_str().unwrap().to_string();
+    context.params.insert(key, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_net_clear_param(context: &mut ClientContext) {
+    context.params.clear();
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn rust_net_post(
     tokio_context: &mut TokioContext,
     client_context: &mut ClientContext,
@@ -140,9 +190,17 @@ pub unsafe extern "C" fn rust_net_post(
 
     let item = Arc::new(OnceCell::new());
     let key = client_context.items.insert(item.clone());
+    let headers = hash_map_to_header_map(&client_context.headers);
+    let params = client_context.params.clone();
 
     tokio_context.runtime.spawn(async move {
-        let response_result = client_cloned.post(url).body(data_slice).send().await;
+        let response_result = client_cloned
+            .post(url)
+            .body(data_slice)
+            .query(&params)
+            .headers(headers)
+            .send()
+            .await;
         handle_response(response_result, item).await;
     });
 
@@ -161,13 +219,25 @@ pub unsafe extern "C" fn rust_net_get(
 
     let item = Arc::new(OnceCell::new());
     let key = client_context.items.insert(item.clone());
+    let headers = hash_map_to_header_map(&client_context.headers);
+    let params = client_context.params.clone();
 
     tokio_context.runtime.spawn(async move {
-        let response_result = client_cloned.get(url).send().await;
+        let response_result = client_cloned
+            .get(url)
+            .headers(headers)
+            .query(&params)
+            .send()
+            .await;
         handle_response(response_result, item).await;
     });
 
     key as u64
+}
+
+#[no_mangle]
+pub extern "C" fn rust_net_remove_request(client_context: &mut ClientContext, key: u64) {
+    client_context.items.remove(key as usize);
 }
 
 /// 获取reqwest请求状态

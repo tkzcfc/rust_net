@@ -1,4 +1,4 @@
-#include <cstdarg>
+﻿#include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
 #include <ostream>
@@ -19,13 +19,21 @@ struct RequestResponse {
 
 extern "C" {
 
-TokioContext *rust_net_tokio_context_new(uint32_t thread_count);
+TokioContext *rust_net_tokio_new(uint32_t thread_count);
 
-void rust_net_tokio_context_free(TokioContext *handler);
+void rust_net_tokio_free(TokioContext *handler);
 
 ClientContext *rust_net_client_new(bool brotli, bool cookie_store);
 
 void rust_net_client_free(ClientContext *handler);
+
+void rust_net_add_header(ClientContext *context, const char *key, const char *value);
+
+void rust_net_clear_header(ClientContext *context);
+
+void rust_net_add_param(ClientContext *context, const char *key, const char *value);
+
+void rust_net_clear_param(ClientContext *context);
 
 uint64_t rust_net_post(TokioContext *tokio_context,
                        ClientContext *client_context,
@@ -34,6 +42,8 @@ uint64_t rust_net_post(TokioContext *tokio_context,
                        uintptr_t length);
 
 uint64_t rust_net_get(TokioContext *tokio_context, ClientContext *client_context, const char *url);
+
+void rust_net_remove_request(ClientContext *client_context, uint64_t key);
 
 /// 获取reqwest请求状态
 /// 0正在请求
