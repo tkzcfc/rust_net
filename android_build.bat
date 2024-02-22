@@ -3,6 +3,9 @@
 set ANDROID_API_LEVEL=22
 set NDK_DIR=C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\20.1.5948944
 
+rem yes or no
+set WITH_LIB_OPEN_SSL="no"
+
 set TOOL_CHAINS=%NDK_DIR%\toolchains\llvm\prebuilt\windows-x86_64\bin\
 
 set CUR_DIR=%~dp0
@@ -16,6 +19,8 @@ rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc aarch64-linux-andr
 rmdir /S /Q .\output
 
 
+
+rem ******************************************** Windows ********************************************
 
 mkdir .\output\windows
 
@@ -33,15 +38,17 @@ copy .\target\i686-pc-windows-msvc\release\rust_net.lib .\output\windows\x86\rus
 
 
 
-
-rem set OPENSSL_LIB_DIR=%CUR_DIR%libs\openssl\arm64-v8a
-rem set OPENSSL_DIR=D:\Tools\vcpkg\installed\x64-windows-static
-rem set OPENSSL_STATIC=Yes
-
-
+rem ******************************************** Android ********************************************
 mkdir .\output\android\
 
 rem arm64-v8a
+
+if %WITH_LIB_OPEN_SSL% == "yes" (
+    set OPENSSL_LIB_DIR=%CUR_DIR%openssl\android\arm64-v8a\lib
+    set OPENSSL_DIR=%CUR_DIR%openssl\android\arm64-v8a
+    set OPENSSL_STATIC=Yes
+)
+
 set TARGET_AR=%TOOL_CHAINS%\aarch64-linux-android-ar
 set TARGET_CC=%TOOL_CHAINS%\aarch64-linux-android%ANDROID_API_LEVEL%-clang
 cargo build --target aarch64-linux-android --release
@@ -51,6 +58,12 @@ copy .\target\aarch64-linux-android\release\librust_net.a .\output\android\arm64
 
 
 rem rem armeabi-v7a
+if %WITH_LIB_OPEN_SSL% == "yes" (
+    set OPENSSL_LIB_DIR=%CUR_DIR%openssl\android\armeabi-v7a\lib
+    set OPENSSL_DIR=%CUR_DIR%openssl\android\armeabi-v7a
+    set OPENSSL_STATIC=Yes
+)
+
 set TARGET_AR=%TOOL_CHAINS%\arm-linux-androideabi-ar
 set TARGET_CC=%TOOL_CHAINS%\armv7a-linux-androideabi%ANDROID_API_LEVEL%-clang
 cargo build --target armv7-linux-androideabi --release
@@ -60,6 +73,12 @@ copy .\target\armv7-linux-androideabi\release\librust_net.a .\output\android\arm
 
 
 rem x86
+if %WITH_LIB_OPEN_SSL% == "yes" (
+    set OPENSSL_LIB_DIR=%CUR_DIR%openssl\android\x86\lib
+    set OPENSSL_DIR=%CUR_DIR%openssl\android\x86
+    set OPENSSL_STATIC=Yes
+)
+
 set TARGET_AR=%TOOL_CHAINS%\i686-linux-android-ar
 set TARGET_CC=%TOOL_CHAINS%\i686-linux-android%ANDROID_API_LEVEL%-clang
 cargo build --target i686-linux-android --release
@@ -69,6 +88,12 @@ copy .\target\i686-linux-android\release\librust_net.a .\output\android\x86\libr
 
 
 rem rem x86_64
+if %WITH_LIB_OPEN_SSL% == "yes" (
+    set OPENSSL_LIB_DIR=%CUR_DIR%openssl\android\x86_64\lib
+    set OPENSSL_DIR=%CUR_DIR%openssl\android\x86_64
+    set OPENSSL_STATIC=Yes
+)
+
 set TARGET_AR=%TOOL_CHAINS%\x86_64-linux-android-ar
 set TARGET_CC=%TOOL_CHAINS%\x86_64-linux-android%ANDROID_API_LEVEL%-clang
 cargo build --target x86_64-linux-android --release
