@@ -1,6 +1,6 @@
 @echo off
 
-set ANDROID_API_LEVEL=21
+set ANDROID_API_LEVEL=22
 set NDK_DIR=C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\20.1.5948944
 
 set TOOL_CHAINS=%NDK_DIR%\toolchains\llvm\prebuilt\windows-x86_64\bin\
