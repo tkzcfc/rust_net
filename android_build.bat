@@ -9,10 +9,6 @@ set CUR_DIR=%~dp0
 
 
 
-rem set OPENSSL_LIB_DIR=%CUR_DIR%libs\openssl\arm64-v8a
-rem set OPENSSL_DIR=D:\Tools\vcpkg\installed\x64-windows-static
-rem set OPENSSL_STATIC=Yes
-
 cbindgen --config cbindgen.toml --crate rust_net --lang c++ --output rust_net.h
 
 rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
@@ -37,6 +33,10 @@ copy .\target\i686-pc-windows-msvc\release\rust_net.lib .\output\windows\x86\rus
 
 
 
+
+rem set OPENSSL_LIB_DIR=%CUR_DIR%libs\openssl\arm64-v8a
+rem set OPENSSL_DIR=D:\Tools\vcpkg\installed\x64-windows-static
+rem set OPENSSL_STATIC=Yes
 
 
 mkdir .\output\android\
