@@ -2,7 +2,7 @@
 
 
 
-### 生成.h头文件
+## 生成.h头文件
 
 ```
 
@@ -20,7 +20,13 @@
 
 
 
-### 编译静态库
+## 编译静态库
+
+
+
+
+
+### Windows 编译静态库
 
 ```text
 vc link lib:
@@ -34,19 +40,6 @@ vc link lib:
         Ncrypt.lib
         libdurl.lib
         
-    rustls:
-        Bcrypt.lib
-        ws2_32.lib
-        Ntdll.lib
-        libdurl.lib
-
-android build example:
- 
- export TARGET_AR=~/.NDK/arm/bin/arm-linux-androideabi-ar
- export TARGET_CC=~/.NDK/arm/bin/arm-linux-androideabi-clang
- cargo build --target armv7-linux-androideabi --release
- 
- 
 windows:
 	cargo build --release
 	cargo build --target=x86_64-pc-windows-msvc --release
@@ -54,3 +47,47 @@ windows:
 
 
 ```
+
+
+
+### Android编译
+
+1.添加Rust工具链
+
+```
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+```
+
+2.开始编译
+
+```
+
+
+
+
+设置交叉编译环境
+	linux:
+ 		export TARGET_AR=~/.NDK/arm/bin/arm-linux-androideabi-ar
+ 		export TARGET_CC=~/.NDK/arm/bin/arm-linux-androideabi-clang
+ 	windows:
+ 		set TARGET_AR C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\24.0.8215888\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android-ar
+ 		set TARGET_AR C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\24.0.8215888\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android21-clang
+ 编译：
+     cargo build --target armv7-linux-androideabi --release
+ 
+
+
+3. 编译静态库
+# 为arm64-v8a架构编译
+cargo build --target aarch64-linux-android --release
+# 为armeabi-v7a架构编译
+cargo build --target armv7-linux-androideabi --release
+# 为x86架构编译
+cargo build --target i686-linux-android --release
+# 为x86_64架构编译
+cargo build --target x86_64-linux-android --release
+
+
+
+```
+
