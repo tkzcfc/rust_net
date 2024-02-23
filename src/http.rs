@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
 /// client context
@@ -13,6 +14,7 @@ pub struct ClientContext {
     items: slab::Slab<Arc<OnceCell<RespResult>>>,
     headers: HashMap<String, String>,
     params: HashMap<String, String>,
+    last_clear_time: Instant,
 }
 
 pub struct ResponseData {
@@ -21,9 +23,14 @@ pub struct ResponseData {
     version: Version,
 }
 
-enum RespResult {
+enum RespResultType {
     Data(ResponseData),
     Error(String),
+}
+
+pub struct RespResult {
+    resp: RespResultType,
+    create_time: Instant,
 }
 
 #[repr(C)]
@@ -89,6 +96,7 @@ pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut 
             items: Default::default(),
             headers: HashMap::new(),
             params: HashMap::new(),
+            last_clear_time: Instant::now(),
         })),
         Err(_) => std::ptr::null_mut(),
     }
@@ -115,26 +123,38 @@ async fn handle_response(
                 let version = response.version();
                 match response.bytes().await {
                     Ok(bytes) => {
-                        let _ = item.set(RespResult::Data(ResponseData {
-                            status,
-                            data: bytes.to_vec(),
-                            version,
-                        }));
+                        let _ = item.set(RespResult {
+                            resp: RespResultType::Data(ResponseData {
+                                status,
+                                data: bytes.to_vec(),
+                                version,
+                            }),
+                            create_time: Instant::now(),
+                        });
                     }
                     Err(error) => {
-                        let _ = item.set(RespResult::Error(error.to_string()));
+                        let _ = item.set(RespResult {
+                            resp: RespResultType::Error(error.to_string()),
+                            create_time: Instant::now(),
+                        });
                     }
                 }
             } else {
-                let _ = item.set(RespResult::Data(ResponseData {
-                    status: response.status().as_u16(),
-                    data: Vec::new(),
-                    version: response.version(),
-                }));
+                let _ = item.set(RespResult {
+                    resp: RespResultType::Data(ResponseData {
+                        status: response.status().as_u16(),
+                        data: Vec::new(),
+                        version: response.version(),
+                    }),
+                    create_time: Instant::now(),
+                });
             }
         }
         Err(error) => {
-            let _ = item.set(RespResult::Error(error.to_string()));
+            let _ = item.set(RespResult {
+                resp: RespResultType::Error(error.to_string()),
+                create_time: Instant::now(),
+            });
         }
     }
 }
@@ -179,6 +199,7 @@ pub unsafe extern "C" fn rust_net_post(
     data: *const u8,
     length: usize,
 ) -> u64 {
+    client_context.clear_expires_data();
     if data.is_null() {
         return 0;
     }
@@ -213,6 +234,7 @@ pub unsafe extern "C" fn rust_net_get(
     client_context: &mut ClientContext,
     url: *const c_char,
 ) -> u64 {
+    client_context.clear_expires_data();
     let client_cloned = client_context.client.clone();
 
     let url = CStr::from_ptr(url).to_str().unwrap().to_string();
@@ -237,7 +259,9 @@ pub unsafe extern "C" fn rust_net_get(
 
 #[no_mangle]
 pub extern "C" fn rust_net_remove_request(client_context: &mut ClientContext, key: u64) {
-    client_context.items.remove(key as usize);
+    if client_context.items.contains(key as usize) {
+        client_context.items.remove(key as usize);
+    }
 }
 
 /// 获取reqwest请求状态
@@ -249,9 +273,9 @@ pub extern "C" fn rust_net_remove_request(client_context: &mut ClientContext, ke
 pub extern "C" fn rust_net_get_request_state(client_context: &mut ClientContext, key: u64) -> i32 {
     if let Some(item) = client_context.items.get(key as usize) {
         if let Some(resp) = item.get() {
-            match resp {
-                RespResult::Data(_) => 1,
-                RespResult::Error(_) => -1,
+            match resp.resp {
+                RespResultType::Data(_) => 1,
+                RespResultType::Error(_) => -1,
             }
         } else {
             // 正在请求中
@@ -271,7 +295,7 @@ pub extern "C" fn rust_net_get_request_error(
 ) -> *mut c_char {
     if let Some(item) = client_context.items.get(key as usize) {
         if let Some(resp) = item.get() {
-            if let RespResult::Error(error) = resp {
+            if let RespResultType::Error(error) = &resp.resp {
                 // 将 Rust 字符串转换为 C 风格的 `CString`
                 return match CString::new(error.as_str()) {
                     Ok(cstr) => {
@@ -296,7 +320,7 @@ pub extern "C" fn rust_net_get_request_response(
 ) -> RequestResponse {
     if let Some(item) = client_context.items.get(key as usize) {
         if let Some(resp) = item.get() {
-            if let RespResult::Data(data) = resp {
+            if let RespResultType::Data(data) = &resp.resp {
                 return RequestResponse::from(data);
             }
         }
@@ -328,5 +352,22 @@ pub extern "C" fn rust_net_free_request_response(resp: RequestResponse) {
         let buffer = Vec::from_raw_parts(resp.data as *mut u8, resp.len, resp.len);
         // Rust 会在这里清理内存
         drop(buffer);
+    }
+}
+
+impl ClientContext {
+    fn clear_expires_data(&mut self) {
+        if self.last_clear_time.elapsed() >= Duration::from_secs(5) {
+            self.last_clear_time = Instant::now();
+
+            // 清理长时间未取的消息
+            self.items.retain(|_, item| {
+                if let Some(resp) = item.get() {
+                    resp.create_time.elapsed() < Duration::from_secs(20)
+                } else {
+                    true
+                }
+            });
+        }
     }
 }
