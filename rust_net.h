@@ -33,6 +33,8 @@ void rust_net_clear_header(ClientContext *context);
 
 void rust_net_add_param(ClientContext *context, const char *key, const char *value);
 
+void rust_net_set_clear_expires_enabled(ClientContext *context, bool value);
+
 void rust_net_clear_param(ClientContext *context);
 
 uint64_t rust_net_post(TokioContext *tokio_context,

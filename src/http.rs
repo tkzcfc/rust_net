@@ -15,6 +15,7 @@ pub struct ClientContext {
     headers: HashMap<String, String>,
     params: HashMap<String, String>,
     last_clear_time: Instant,
+    clear_expires_enabled: bool,
 }
 
 pub struct ResponseData {
@@ -97,6 +98,7 @@ pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut 
             headers: HashMap::new(),
             params: HashMap::new(),
             last_clear_time: Instant::now(),
+            clear_expires_enabled: true,
         })),
         Err(_) => std::ptr::null_mut(),
     }
@@ -184,6 +186,11 @@ pub unsafe extern "C" fn rust_net_add_param(
     let key = CStr::from_ptr(key).to_str().unwrap().to_string();
     let value = CStr::from_ptr(value).to_str().unwrap().to_string();
     context.params.insert(key, value);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_net_set_clear_expires_enabled(context: &mut ClientContext, value: bool) {
+    context.set_clear_expires_enabled(value);
 }
 
 #[no_mangle]
@@ -356,8 +363,19 @@ pub extern "C" fn rust_net_free_request_response(resp: RequestResponse) {
 }
 
 impl ClientContext {
+
+    fn set_clear_expires_enabled(&mut self, value: bool) {
+        self.clear_expires_enabled = value;
+        if value {
+            self.last_clear_time = Instant::now();
+        }
+    }
+
     fn clear_expires_data(&mut self) {
-        if self.last_clear_time.elapsed() >= Duration::from_secs(5) {
+        if !self.clear_expires_enabled {
+            return;
+        }
+        if self.last_clear_time.elapsed() >= Duration::from_secs(10) {
             self.last_clear_time = Instant::now();
 
             // 清理长时间未取的消息
