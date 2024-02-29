@@ -86,6 +86,8 @@ void rust_net_ws_send(WsContext *ws_context, const uint8_t *data, uintptr_t leng
 
 WsMessageData rust_net_ws_get_message(WsContext *ws_context);
 
+void rust_net_ws_close(WsContext *ws_context);
+
 void rust_net_ws_free(WsContext *ws_context);
 
 void rust_net_ws_free_message(WsMessageData resp);

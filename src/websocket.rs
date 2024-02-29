@@ -129,6 +129,13 @@ pub unsafe extern "C" fn rust_net_ws_get_message(ws_context: &mut WsContext) -> 
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn rust_net_ws_close(ws_context: &mut WsContext) {
+    if let Some(tx) = ws_context.tx.get() {
+        let _ = tx.send(WsWriterMessage::Close);
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn rust_net_ws_free(ws_context: *mut WsContext) {
     let ws_context = Box::from_raw(ws_context);
 
