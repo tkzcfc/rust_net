@@ -83,14 +83,10 @@ pub unsafe extern "C" fn rust_net_ws_connect(
                 }
 
                 let (writer, reader) = ws_stream.split();
-
-                let msg_queue_cloned = msg_queue.clone();
-                tokio::spawn(async {
-                    select! {
-                        _ = poll_read(reader, msg_queue_cloned.clone()) => {}
-                        _ = poll_write(writer, rx, msg_queue_cloned) => {}
-                    }
-                });
+                select! {
+                    _ = poll_read(reader, msg_queue.clone()) => {}
+                    _ = poll_write(writer, rx, msg_queue) => {}
+                }
             }
             Err(err) => {
                 msg_queue
