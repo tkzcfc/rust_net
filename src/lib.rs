@@ -1,4 +1,5 @@
 pub mod http;
+mod websocket;
 
 extern crate alloc;
 extern crate core;

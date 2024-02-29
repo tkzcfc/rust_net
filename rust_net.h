@@ -10,11 +10,21 @@ struct ClientContext;
 /// tokio context
 struct TokioContext;
 
+struct WsContext;
+
 struct RequestResponse {
   const uint8_t *data;
   uintptr_t len;
+  uintptr_t cap;
   uint32_t status;
   int32_t version;
+};
+
+struct WsMessageData {
+  int32_t message_type;
+  const uint8_t *data;
+  uintptr_t len;
+  uintptr_t cap;
 };
 
 extern "C" {
@@ -62,8 +72,22 @@ char *rust_net_get_request_error(ClientContext *client_context, uint64_t key);
 /// 使用完成之后 调用 rust_net_free_request_response 释放内存
 RequestResponse rust_net_get_request_response(ClientContext *client_context, uint64_t key);
 
+/// 获取reqwest请求结果cookie
+/// 使用完成之后 调用 rust_net_free_string 释放内存
+char *rust_net_get_response_cookies(ClientContext *client_context, uint64_t key);
+
 void rust_net_free_string(char *s);
 
 void rust_net_free_request_response(RequestResponse resp);
+
+WsContext *rust_net_ws_connect(TokioContext *context, const char *url, const char *cookies);
+
+void rust_net_ws_send(WsContext *ws_context, const uint8_t *data, uintptr_t length);
+
+WsMessageData rust_net_ws_get_message(WsContext *ws_context);
+
+void rust_net_ws_free(WsContext *ws_context);
+
+void rust_net_ws_free_message(WsMessageData resp);
 
 } // extern "C"

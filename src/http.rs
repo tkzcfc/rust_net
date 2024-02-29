@@ -1,6 +1,7 @@
 use crate::TokioContext;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Response, Version};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -22,6 +23,7 @@ pub struct ResponseData {
     status: u16,
     data: Vec<u8>,
     version: Version,
+    cookies: Vec<Pair>,
 }
 
 enum RespResultType {
@@ -38,8 +40,15 @@ pub struct RespResult {
 pub struct RequestResponse {
     data: *const u8,
     len: usize,
+    cap: usize,
     status: u32,
     version: i32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Pair {
+    pub(crate) key: String,
+    pub(crate) value: String,
 }
 
 impl RequestResponse {
@@ -49,6 +58,7 @@ impl RequestResponse {
         let this = Self {
             data: buffer.as_ptr(),
             len: buffer.len(),
+            cap: buffer.capacity(),
             status: data.status as u32,
             version: {
                 if data.version == Version::HTTP_09 {
@@ -120,6 +130,14 @@ async fn handle_response(
     }
     match response_result {
         Ok(response) => {
+            let cookies = response
+                .cookies()
+                .map(|cookie| Pair {
+                    key: cookie.name().to_string(),
+                    value: cookie.value().to_string(),
+                })
+                .collect::<Vec<_>>();
+
             if response.status().is_success() {
                 let status = response.status().as_u16();
                 let version = response.version();
@@ -130,6 +148,7 @@ async fn handle_response(
                                 status,
                                 data: bytes.to_vec(),
                                 version,
+                                cookies,
                             }),
                             create_time: Instant::now(),
                         });
@@ -147,6 +166,7 @@ async fn handle_response(
                         status: response.status().as_u16(),
                         data: Vec::new(),
                         version: response.version(),
+                        cookies,
                     }),
                     create_time: Instant::now(),
                 });
@@ -189,7 +209,10 @@ pub unsafe extern "C" fn rust_net_add_param(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_set_clear_expires_enabled(context: &mut ClientContext, value: bool) {
+pub unsafe extern "C" fn rust_net_set_clear_expires_enabled(
+    context: &mut ClientContext,
+    value: bool,
+) {
     context.set_clear_expires_enabled(value);
 }
 
@@ -336,9 +359,37 @@ pub extern "C" fn rust_net_get_request_response(
     RequestResponse {
         data: std::ptr::null(),
         len: 0,
+        cap: 0,
         status: 0,
         version: 0,
     }
+}
+
+/// 获取reqwest请求结果cookie
+/// 使用完成之后 调用 rust_net_free_string 释放内存
+#[no_mangle]
+pub extern "C" fn rust_net_get_response_cookies(
+    client_context: &mut ClientContext,
+    key: u64,
+) -> *mut c_char {
+    if let Some(item) = client_context.items.get(key as usize) {
+        if let Some(resp) = item.get() {
+            if let RespResultType::Data(data) = &resp.resp {
+                if let Ok(json) = serde_json::to_string(&data.cookies) {
+                    return match CString::new(json) {
+                        Ok(cstr) => {
+                            // 释放 CString 的所有权
+                            cstr.into_raw()
+                        }
+                        Err(_) => std::ptr::null_mut(), // 如果转换失败，返回空指针
+                    };
+                }
+
+                return std::ptr::null_mut();
+            }
+        }
+    }
+    std::ptr::null_mut()
 }
 
 #[no_mangle]
@@ -352,18 +403,17 @@ pub unsafe extern "C" fn rust_net_free_string(s: *mut c_char) {
 
 #[no_mangle]
 pub extern "C" fn rust_net_free_request_response(resp: RequestResponse) {
-    if resp.data.is_null() {
+    if resp.data.is_null() || resp.cap <= 0 {
         return;
     }
     unsafe {
-        let buffer = Vec::from_raw_parts(resp.data as *mut u8, resp.len, resp.len);
+        let buffer = Vec::from_raw_parts(resp.data as *mut u8, resp.len, resp.cap);
         // Rust 会在这里清理内存
         drop(buffer);
     }
 }
 
 impl ClientContext {
-
     fn set_clear_expires_enabled(&mut self, value: bool) {
         self.clear_expires_enabled = value;
         if value {
