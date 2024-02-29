@@ -1,4 +1,4 @@
-﻿#include <cstdarg>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
 #include <ostream>

@@ -5,6 +5,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use http::header::COOKIE;
 use http::HeaderValue;
+use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -40,7 +41,7 @@ enum WsWriterMessage {
 }
 
 pub struct WsContext {
-    msg_queue: Arc<Mutex<Vec<WsMessage>>>,
+    msg_queue: Arc<Mutex<VecDeque<WsMessage>>>,
     tx: Arc<OnceCell<UnboundedSender<WsWriterMessage>>>,
 }
 
@@ -55,14 +56,14 @@ pub unsafe extern "C" fn rust_net_ws_connect(
 
     let ws_context = WsContext {
         tx: Arc::new(OnceCell::new()),
-        msg_queue: Arc::new(Mutex::new(Vec::new())),
+        msg_queue: Arc::new(Mutex::new(VecDeque::new())),
     };
 
     let tx_cloned = ws_context.tx.clone();
-    let msg_queue_cloned = ws_context.msg_queue.clone();
+    let msg_queue = ws_context.msg_queue.clone();
 
     context.runtime.spawn(async move {
-        let result = ws_connect(url, cookies, msg_queue_cloned.clone()).await;
+        let result = ws_connect(url, cookies).await;
 
         // 调用了 rust_net_ws_connect 之后 立即调用 rust_net_ws_free 销毁了WsContext
         if Arc::strong_count(&tx_cloned) == 1 {
@@ -70,24 +71,32 @@ pub unsafe extern "C" fn rust_net_ws_connect(
         }
 
         match result {
-            Ok(tx) => {
+            Ok(ws_stream) => {
+                let (tx, rx) = unbounded_channel::<WsWriterMessage>();
                 if let Ok(_) = tx_cloned.set(tx) {
-                    msg_queue_cloned
-                        .lock()
-                        .await
-                        .push(WsMessage::ConnectSuccess);
+                    msg_queue.lock().await.push_back(WsMessage::ConnectSuccess);
                 } else {
-                    msg_queue_cloned
+                    msg_queue
                         .lock()
                         .await
-                        .push(WsMessage::ConnectFailed("init failed".to_string()));
+                        .push_back(WsMessage::ConnectFailed("init failed".to_string()));
                 }
+
+                let (writer, reader) = ws_stream.split();
+
+                let msg_queue_cloned = msg_queue.clone();
+                tokio::spawn(async {
+                    select! {
+                        _ = poll_read(reader, msg_queue_cloned.clone()) => {}
+                        _ = poll_write(writer, rx, msg_queue_cloned) => {}
+                    }
+                });
             }
             Err(err) => {
-                msg_queue_cloned
+                msg_queue
                     .lock()
                     .await
-                    .push(WsMessage::ConnectFailed(err.to_string()));
+                    .push_back(WsMessage::ConnectFailed(err.to_string()));
             }
         }
     });
@@ -115,7 +124,7 @@ pub unsafe extern "C" fn rust_net_ws_send(
 #[no_mangle]
 pub unsafe extern "C" fn rust_net_ws_get_message(ws_context: &mut WsContext) -> WsMessageData {
     if let Ok(mut queue) = ws_context.msg_queue.try_lock() {
-        if let Some(message) = queue.pop() {
+        if let Some(message) = queue.pop_front() {
             return WsMessageData::from(message);
         }
     }
@@ -149,8 +158,7 @@ pub extern "C" fn rust_net_ws_free_message(resp: WsMessageData) {
 async fn ws_connect(
     url: String,
     cookies: String,
-    msg_queue: Arc<Mutex<Vec<WsMessage>>>,
-) -> Result<UnboundedSender<WsWriterMessage>> {
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
     let cookies: Vec<Pair> = serde_json::from_str(&cookies)?;
     let mut req = url.into_client_request()?;
     let headers = req.headers_mut();
@@ -162,21 +170,13 @@ async fn ws_connect(
     }
 
     let (ws_stream, _) = connect_async(req).await?;
-    let (writer, reader) = ws_stream.split();
-    let (tx, rx) = unbounded_channel::<WsWriterMessage>();
-
-    select! {
-         _ = poll_read(reader, msg_queue.clone()) => {}
-         _ = poll_write(writer, rx, msg_queue.clone()) => {}
-    }
-
-    Ok(tx)
+    Ok(ws_stream)
 }
 
 async fn poll_write(
     mut writer: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     mut rx: UnboundedReceiver<WsWriterMessage>,
-    msg_queue: Arc<Mutex<Vec<WsMessage>>>,
+    msg_queue: Arc<Mutex<VecDeque<WsMessage>>>,
 ) {
     while let Some(message) = rx.recv().await {
         match message {
@@ -185,7 +185,7 @@ async fn poll_write(
                     msg_queue
                         .lock()
                         .await
-                        .push(WsMessage::Disconnect(err.to_string()));
+                        .push_back(WsMessage::Disconnect(err.to_string()));
                     break;
                 }
             }
@@ -193,7 +193,7 @@ async fn poll_write(
                 msg_queue
                     .lock()
                     .await
-                    .push(WsMessage::Disconnect("proactively disconnect".to_string()));
+                    .push_back(WsMessage::Disconnect("proactively disconnect".to_string()));
                 break;
             }
         }
@@ -203,7 +203,7 @@ async fn poll_write(
 
 async fn poll_read(
     mut reader: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    msg_queue: Arc<Mutex<Vec<WsMessage>>>,
+    msg_queue: Arc<Mutex<VecDeque<WsMessage>>>,
 ) {
     while let Some(result) = reader.next().await {
         let msg = {
@@ -213,29 +213,32 @@ async fn poll_read(
                     msg_queue
                         .lock()
                         .await
-                        .push(WsMessage::Disconnect(err.to_string()));
+                        .push_back(WsMessage::Disconnect(err.to_string()));
                     break;
                 }
             }
         };
         match msg {
             Message::Text(data) => {
-                msg_queue.lock().await.push(WsMessage::RecvText(data));
+                msg_queue.lock().await.push_back(WsMessage::RecvText(data));
             }
             Message::Binary(data) => {
-                msg_queue.lock().await.push(WsMessage::RecvBinary(data));
+                msg_queue
+                    .lock()
+                    .await
+                    .push_back(WsMessage::RecvBinary(data));
             }
             Message::Ping(_) => {
-                msg_queue.lock().await.push(WsMessage::RecvPing);
+                msg_queue.lock().await.push_back(WsMessage::RecvPing);
             }
             Message::Pong(_) => {
-                msg_queue.lock().await.push(WsMessage::RecvPong);
+                msg_queue.lock().await.push_back(WsMessage::RecvPong);
             }
             Message::Close(_) => {
                 msg_queue
                     .lock()
                     .await
-                    .push(WsMessage::Disconnect("close".into()));
+                    .push_back(WsMessage::Disconnect("close".into()));
             }
             Message::Frame(_) => {}
         }
