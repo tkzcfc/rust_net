@@ -426,7 +426,7 @@ async fn handle_response(
         Ok(response) => {
             let mut cookies_map = HashMap::new();
             for cookie in response.cookies() {
-                cookies_map.insert(cookie.value().to_string(), cookie.value().to_string());
+                cookies_map.insert(cookie.name().to_string(), cookie.value().to_string());
             }
 
             let cookies = if let Ok(str) = serde_json::to_string(&cookies_map) {
