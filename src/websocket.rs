@@ -1,11 +1,10 @@
-use crate::http::Pair;
 use crate::TokioContext;
 use anyhow::Result;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use http::header::COOKIE;
 use http::HeaderValue;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -162,13 +161,13 @@ async fn ws_connect(
     url: String,
     cookies: String,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
-    let cookies: Vec<Pair> = serde_json::from_str(&cookies)?;
+    let cookies: HashMap<String, String> = serde_json::from_str(&cookies)?;
     let mut req = url.into_client_request()?;
     let headers = req.headers_mut();
-    for pair in cookies.iter() {
+    for (key, value) in cookies.iter() {
         headers.append(
             COOKIE,
-            HeaderValue::from_str(&format!("{}={}", pair.key, pair.value))?,
+            HeaderValue::from_str(&format!("{}={}", key, value))?,
         );
     }
 

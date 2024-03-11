@@ -1,7 +1,6 @@
 use crate::TokioContext;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Response, Version};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -23,7 +22,8 @@ pub struct ResponseData {
     status: u16,
     data: Vec<u8>,
     version: Version,
-    cookies: Vec<Pair>,
+    cookies: String,
+    headers: String,
 }
 
 enum RespResultType {
@@ -43,12 +43,6 @@ pub struct RequestResponse {
     cap: usize,
     status: u32,
     version: i32,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Pair {
-    pub(crate) key: String,
-    pub(crate) value: String,
 }
 
 impl RequestResponse {
@@ -95,7 +89,7 @@ fn hash_map_to_header_map(map: &HashMap<String, String>) -> HeaderMap {
 }
 
 #[no_mangle]
-pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut ClientContext {
+pub extern "C" fn rust_net_http_client_new(brotli: bool, cookie_store: bool) -> *mut ClientContext {
     match reqwest::Client::builder()
         .use_rustls_tls()
         .brotli(brotli)
@@ -115,74 +109,13 @@ pub extern "C" fn rust_net_client_new(brotli: bool, cookie_store: bool) -> *mut 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_client_free(handler: *mut ClientContext) {
+pub unsafe extern "C" fn rust_net_http_client_free(handler: *mut ClientContext) {
     let handler = Box::from_raw(handler);
     drop(handler)
 }
 
-async fn handle_response(
-    response_result: Result<Response, reqwest::Error>,
-    item: Arc<OnceCell<RespResult>>,
-) {
-    // 请求被取消
-    if Arc::strong_count(&item) == 1 {
-        return;
-    }
-    match response_result {
-        Ok(response) => {
-            let cookies = response
-                .cookies()
-                .map(|cookie| Pair {
-                    key: cookie.name().to_string(),
-                    value: cookie.value().to_string(),
-                })
-                .collect::<Vec<_>>();
-
-            if response.status().is_success() {
-                let status = response.status().as_u16();
-                let version = response.version();
-                match response.bytes().await {
-                    Ok(bytes) => {
-                        let _ = item.set(RespResult {
-                            resp: RespResultType::Data(ResponseData {
-                                status,
-                                data: bytes.to_vec(),
-                                version,
-                                cookies,
-                            }),
-                            create_time: Instant::now(),
-                        });
-                    }
-                    Err(error) => {
-                        let _ = item.set(RespResult {
-                            resp: RespResultType::Error(error.to_string()),
-                            create_time: Instant::now(),
-                        });
-                    }
-                }
-            } else {
-                let _ = item.set(RespResult {
-                    resp: RespResultType::Data(ResponseData {
-                        status: response.status().as_u16(),
-                        data: Vec::new(),
-                        version: response.version(),
-                        cookies,
-                    }),
-                    create_time: Instant::now(),
-                });
-            }
-        }
-        Err(error) => {
-            let _ = item.set(RespResult {
-                resp: RespResultType::Error(error.to_string()),
-                create_time: Instant::now(),
-            });
-        }
-    }
-}
-
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_add_header(
+pub unsafe extern "C" fn rust_net_http_add_header(
     context: &mut ClientContext,
     key: *const c_char,
     value: *const c_char,
@@ -193,12 +126,12 @@ pub unsafe extern "C" fn rust_net_add_header(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_clear_header(context: &mut ClientContext) {
+pub unsafe extern "C" fn rust_net_http_clear_header(context: &mut ClientContext) {
     context.headers.clear();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_add_param(
+pub unsafe extern "C" fn rust_net_http_add_param(
     context: &mut ClientContext,
     key: *const c_char,
     value: *const c_char,
@@ -209,7 +142,7 @@ pub unsafe extern "C" fn rust_net_add_param(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_set_clear_expires_enabled(
+pub unsafe extern "C" fn rust_net_http_set_clear_expires_enabled(
     context: &mut ClientContext,
     value: bool,
 ) {
@@ -217,12 +150,12 @@ pub unsafe extern "C" fn rust_net_set_clear_expires_enabled(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_clear_param(context: &mut ClientContext) {
+pub unsafe extern "C" fn rust_net_http_clear_param(context: &mut ClientContext) {
     context.params.clear();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_post(
+pub unsafe extern "C" fn rust_net_http_post(
     tokio_context: &mut TokioContext,
     client_context: &mut ClientContext,
     url: *const c_char,
@@ -259,7 +192,7 @@ pub unsafe extern "C" fn rust_net_post(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_get(
+pub unsafe extern "C" fn rust_net_http_get(
     tokio_context: &mut TokioContext,
     client_context: &mut ClientContext,
     url: *const c_char,
@@ -288,19 +221,22 @@ pub unsafe extern "C" fn rust_net_get(
 }
 
 #[no_mangle]
-pub extern "C" fn rust_net_remove_request(client_context: &mut ClientContext, key: u64) {
+pub extern "C" fn rust_net_http_remove_request(client_context: &mut ClientContext, key: u64) {
     if client_context.items.contains(key as usize) {
         client_context.items.remove(key as usize);
     }
 }
 
-/// 获取reqwest请求状态
+/// 获取请求状态
 /// 0正在请求
 /// -1请求失败
 /// 1请求成功
 /// -2请求不存在
 #[no_mangle]
-pub extern "C" fn rust_net_get_request_state(client_context: &mut ClientContext, key: u64) -> i32 {
+pub extern "C" fn rust_net_http_get_request_state(
+    client_context: &mut ClientContext,
+    key: u64,
+) -> i32 {
     if let Some(item) = client_context.items.get(key as usize) {
         if let Some(resp) = item.get() {
             match resp.resp {
@@ -316,10 +252,10 @@ pub extern "C" fn rust_net_get_request_state(client_context: &mut ClientContext,
     }
 }
 
-/// 获取reqwest请求结果中的错误信息
-/// 使用完成之后 调用 rust_net_free_string 释放内存
+/// 获取请求结果中的错误信息
+/// 使用完成之后 调用 rust_net_http_free_string 释放内存
 #[no_mangle]
-pub extern "C" fn rust_net_get_request_error(
+pub extern "C" fn rust_net_http_get_request_error(
     client_context: &mut ClientContext,
     key: u64,
 ) -> *mut c_char {
@@ -341,10 +277,10 @@ pub extern "C" fn rust_net_get_request_error(
     std::ptr::null_mut()
 }
 
-/// 获取reqwest请求结果
-/// 使用完成之后 调用 rust_net_free_request_response 释放内存
+/// 获取请求结果
+/// 使用完成之后 调用 rust_net_http_free_request_response 释放内存
 #[no_mangle]
-pub extern "C" fn rust_net_get_request_response(
+pub extern "C" fn rust_net_http_get_request_response(
     client_context: &mut ClientContext,
     key: u64,
 ) -> RequestResponse {
@@ -365,27 +301,48 @@ pub extern "C" fn rust_net_get_request_response(
     }
 }
 
-/// 获取reqwest请求结果cookie
-/// 使用完成之后 调用 rust_net_free_string 释放内存
+/// 获取请求结果cookie
+/// 使用完成之后 调用 rust_net_http_free_string 释放内存
 #[no_mangle]
-pub extern "C" fn rust_net_get_response_cookies(
+pub extern "C" fn rust_net_http_get_response_cookies(
     client_context: &mut ClientContext,
     key: u64,
 ) -> *mut c_char {
     if let Some(item) = client_context.items.get(key as usize) {
         if let Some(resp) = item.get() {
             if let RespResultType::Data(data) = &resp.resp {
-                if let Ok(json) = serde_json::to_string(&data.cookies) {
-                    return match CString::new(json) {
-                        Ok(cstr) => {
-                            // 释放 CString 的所有权
-                            cstr.into_raw()
-                        }
-                        Err(_) => std::ptr::null_mut(), // 如果转换失败，返回空指针
-                    };
-                }
+                let json = data.cookies.clone();
+                return match CString::new(json) {
+                    Ok(cstr) => {
+                        // 释放 CString 的所有权
+                        cstr.into_raw()
+                    }
+                    Err(_) => std::ptr::null_mut(), // 如果转换失败，返回空指针
+                };
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
 
-                return std::ptr::null_mut();
+/// 获取请求结果header
+/// 使用完成之后 调用 rust_net_http_free_string 释放内存
+#[no_mangle]
+pub extern "C" fn rust_net_http_get_response_headers(
+    client_context: &mut ClientContext,
+    key: u64,
+) -> *mut c_char {
+    if let Some(item) = client_context.items.get(key as usize) {
+        if let Some(resp) = item.get() {
+            if let RespResultType::Data(data) = &resp.resp {
+                let json = data.headers.clone();
+                return match CString::new(json) {
+                    Ok(cstr) => {
+                        // 释放 CString 的所有权
+                        cstr.into_raw()
+                    }
+                    Err(_) => std::ptr::null_mut(), // 如果转换失败，返回空指针
+                };
             }
         }
     }
@@ -393,7 +350,7 @@ pub extern "C" fn rust_net_get_response_cookies(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rust_net_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn rust_net_http_free_string(s: *mut c_char) {
     if !s.is_null() {
         // 重新获得 CString 的所有权并将其丢弃，这将释放字符串的内存
         let cs = CString::from_raw(s);
@@ -402,7 +359,7 @@ pub unsafe extern "C" fn rust_net_free_string(s: *mut c_char) {
 }
 
 #[no_mangle]
-pub extern "C" fn rust_net_free_request_response(resp: RequestResponse) {
+pub extern "C" fn rust_net_http_free_request_response(resp: RequestResponse) {
     if resp.data.is_null() || resp.cap <= 0 {
         return;
     }
@@ -435,6 +392,91 @@ impl ClientContext {
                 } else {
                     true
                 }
+            });
+        }
+    }
+}
+
+fn headers_to_json(headers: &HeaderMap) -> String {
+    let mut headers_map = HashMap::new();
+    for (key, value) in headers.iter() {
+        // 将HeaderValue转换为String
+        if let Ok(v) = value.to_str() {
+            // 插入到HashMap中
+            headers_map.insert(key.as_str(), v);
+        }
+    }
+    // 使用`serde_json`来序列化HashMap
+    if let Ok(json) = serde_json::to_string(&headers_map) {
+        json
+    } else {
+        "{}".into()
+    }
+}
+
+async fn handle_response(
+    response_result: Result<Response, reqwest::Error>,
+    item: Arc<OnceCell<RespResult>>,
+) {
+    // 请求被取消
+    if Arc::strong_count(&item) == 1 {
+        return;
+    }
+    match response_result {
+        Ok(response) => {
+            let mut cookies_map = HashMap::new();
+            for cookie in response.cookies() {
+                cookies_map.insert(cookie.value().to_string(), cookie.value().to_string());
+            }
+
+            let cookies = if let Ok(str) = serde_json::to_string(&cookies_map) {
+                str
+            } else {
+                "{}".into()
+            };
+
+            let headers = headers_to_json(response.headers());
+
+            if response.status().is_success() {
+                let status = response.status().as_u16();
+                let version = response.version();
+                match response.bytes().await {
+                    Ok(bytes) => {
+                        let _ = item.set(RespResult {
+                            resp: RespResultType::Data(ResponseData {
+                                status,
+                                data: bytes.to_vec(),
+                                version,
+                                cookies,
+                                headers,
+                            }),
+                            create_time: Instant::now(),
+                        });
+                    }
+                    Err(error) => {
+                        let _ = item.set(RespResult {
+                            resp: RespResultType::Error(error.to_string()),
+                            create_time: Instant::now(),
+                        });
+                    }
+                }
+            } else {
+                let _ = item.set(RespResult {
+                    resp: RespResultType::Data(ResponseData {
+                        status: response.status().as_u16(),
+                        data: Vec::new(),
+                        version: response.version(),
+                        cookies,
+                        headers,
+                    }),
+                    create_time: Instant::now(),
+                });
+            }
+        }
+        Err(error) => {
+            let _ = item.set(RespResult {
+                resp: RespResultType::Error(error.to_string()),
+                create_time: Instant::now(),
             });
         }
     }
