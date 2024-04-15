@@ -461,11 +461,22 @@ async fn handle_response(
                     }
                 }
             } else {
+                let status = response.status().as_u16();
+                let version = response.version();
+                let response_data = match response.bytes().await {
+                    Ok(bytes) => {
+                        bytes.to_vec()
+                    }
+                    Err(_) => {
+                        vec![]
+                    }
+                };
+
                 let _ = item.set(RespResult {
                     resp: RespResultType::Data(ResponseData {
-                        status: response.status().as_u16(),
-                        data: Vec::new(),
-                        version: response.version(),
+                        status,
+                        data: response_data,
+                        version,
                         cookies,
                         headers,
                     }),
