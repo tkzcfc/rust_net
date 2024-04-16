@@ -176,7 +176,7 @@ async fn ws_connect(
             }
         },
         Err(err) => {
-            println!("json decode error: {}", err);
+            println!("[wss] json decode error: {}", err);
         }
     }
 
