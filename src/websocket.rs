@@ -161,14 +161,23 @@ async fn ws_connect(
     url: String,
     cookies: String,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
-    let cookies: HashMap<String, String> = serde_json::from_str(&cookies)?;
     let mut req = url.into_client_request()?;
-    let headers = req.headers_mut();
-    for (key, value) in cookies.iter() {
-        headers.append(
-            COOKIE,
-            HeaderValue::from_str(&format!("{}={}", key, value))?,
-        );
+
+    match serde_json::from_str::<HashMap<String, String>>(&cookies) {
+        Ok(cookies) => {
+            if !cookies.is_empty() {
+                let headers = req.headers_mut();
+                for (key, value) in cookies.iter() {
+                    headers.append(
+                        COOKIE,
+                        HeaderValue::from_str(&format!("{}={}", key, value))?,
+                    );
+                }
+            }
+        },
+        Err(err) => {
+            println!("json decode error: {}", err);
+        }
     }
 
     let (ws_stream, _) = connect_async(req).await?;
