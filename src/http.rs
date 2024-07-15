@@ -176,11 +176,12 @@ pub unsafe extern "C" fn rust_net_http_post(
     let key = client_context.items.insert(item.clone());
     let headers = hash_map_to_header_map(&client_context.headers);
     let params = client_context.params.clone();
+    let data = data_slice.to_vec();
 
     tokio_context.runtime.spawn(async move {
         let response_result = client_cloned
             .post(url)
-            .body(data_slice)
+            .body(data)
             .query(&params)
             .headers(headers)
             .send()
@@ -464,9 +465,7 @@ async fn handle_response(
                 let status = response.status().as_u16();
                 let version = response.version();
                 let response_data = match response.bytes().await {
-                    Ok(bytes) => {
-                        bytes.to_vec()
-                    }
+                    Ok(bytes) => bytes.to_vec(),
                     Err(_) => {
                         vec![]
                     }

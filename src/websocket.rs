@@ -174,7 +174,7 @@ async fn ws_connect(
                     );
                 }
             }
-        },
+        }
         Err(err) => {
             println!("[wss] json decode error: {}", err);
         }
