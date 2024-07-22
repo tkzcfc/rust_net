@@ -71,7 +71,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-andro
  		export TARGET_CC=~/.NDK/arm/bin/arm-linux-androideabi-clang
  	windows:
  		set TARGET_AR C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\24.0.8215888\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android-ar
- 		set TARGET_AR C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\24.0.8215888\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android21-clang
+ 		set TARGET_CC C:\Users\Administrator\AppData\Local\Android\Sdk\ndk\24.0.8215888\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android21-clang
  编译：
      cargo build --target armv7-linux-androideabi --release
  
